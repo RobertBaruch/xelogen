@@ -1,48 +1,60 @@
+"""All the nodes known to Xelogen."""
+
 from collections.abc import MutableMapping
 
-from xelogen.nodes import Canonical, NodeSpec
+from xelogen.nodes import Datatype, NodeSpec
 
 
 class Database:
     """Contains specs for all nodes."""
-    nodespecs_by_name: MutableMapping[str, NodeSpec] = {}
+    nodespecs_by_name: MutableMapping[str, NodeSpec]
 
     def add_nodespec(self, nodespec: NodeSpec) -> None:
         """Adds a NodeSpec to the database."""
         self.nodespecs_by_name[nodespec.name] = nodespec
 
     def __init__(self):
-        for n in (
-                NodeSpec("RootSlot", inputs={}, outputs={"*": Canonical.SLOT}),
+        self.nodespecs_by_name = {}
+        for spec in (
+                NodeSpec("RootSlot", inputs={}, outputs={"*": Datatype.SLOT}),
                 NodeSpec("NumChildren",
-                         inputs={"slot": Canonical.SLOT},
-                         outputs={"*": Canonical.INT}),
+                         inputs={"slot": Datatype.SLOT},
+                         outputs={"*": Datatype.INT}),
                 NodeSpec("WriteDynVar<Int>",
                          inputs={
-                             "write": Canonical.IMPULSE_LIST,
-                             "slot": Canonical.SLOT,
-                             "name": Canonical.STRING,
-                             "value": Canonical.INT,
+                             "write": Datatype.IMPULSE_LIST,
+                             "slot": Datatype.SLOT,
+                             "name": Datatype.STRING,
+                             "value": Datatype.INT,
                          },
                          outputs={
-                             "success": Canonical.IMPULSE,
-                             "fail": Canonical.IMPULSE,
+                             "success": Datatype.IMPULSE,
+                             "fail": Datatype.IMPULSE,
                          }),
-                NodeSpec("Pulse", inputs={}, outputs={"*": Canonical.IMPULSE}),
+                NodeSpec("Pulse", inputs={}, outputs={"*": Datatype.IMPULSE}),
                 NodeSpec("StringInput",
                          inputs={},
-                         outputs={"*": Canonical.STRING},
-                         content_type=Canonical.STRING),
+                         outputs={"*": Datatype.STRING},
+                         content_type=Datatype.STRING),
+                NodeSpec("IntInput",
+                         inputs={},
+                         outputs={"*": Datatype.INT},
+                         content_type=Datatype.INT),
                 NodeSpec("ImpulseDisplay",
-                         inputs={"impulse": Canonical.IMPULSE_LIST},
+                         inputs={"impulse": Datatype.IMPULSE_LIST},
                          outputs={}),
                 NodeSpec("PlusOne<Int>",
-                         inputs={"value": Canonical.INT},
-                         outputs={"*": Canonical.INT}),
+                         inputs={"value": Datatype.INT},
+                         outputs={"*": Datatype.INT}),
                 NodeSpec("Plus<String>",
                          inputs={
-                             "values": Canonical.STRING_LIST,
+                             "values": Datatype.STRING_LIST,
                          },
-                         outputs={"*": Canonical.STRING}),
+                         outputs={"*": Datatype.STRING}),
+                NodeSpec("Plus<Int>",
+                         inputs={
+                             "values": Datatype.INT_LIST,
+                         },
+                         outputs={"*": Datatype.INT}),
         ):
-            self.add_nodespec(n)
+            self.add_nodespec(spec)

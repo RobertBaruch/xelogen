@@ -1,13 +1,11 @@
+from abc import ABC, abstractmethod
 from typing import cast
 
 from xelogen.program import Program
 
 
-class Linter:
+class Linter(ABC):
     linters: list["Linter"] = []
-
-    def __init__(self):
-        pass
 
     @classmethod
     def lint(cls, pgm: Program) -> int:
@@ -17,8 +15,12 @@ class Linter:
             warnings += linter.linter_pass(pgm)
         return warnings
 
+    @abstractmethod
     def linter_pass(self, pgm: Program) -> int:
-        return 0
+        """Lints the given program.
+
+        Returns the number of warnings found.
+        """
 
     @classmethod
     def register_linter(cls, linter: "Linter") -> None:
@@ -26,9 +28,6 @@ class Linter:
 
 
 class DynVarLinter(Linter):
-
-    def __init__(self):
-        super().__init__()
 
     def linter_pass(self, pgm: Program) -> int:
         warnings = 0
@@ -60,8 +59,5 @@ class DynVarLinter(Linter):
         return warnings
 
 
-def init_linter() -> Linter:
-    linter = Linter()
+def init_linter() -> None:
     Linter.register_linter(DynVarLinter())
-
-    return linter

@@ -1,3 +1,5 @@
+"""What a main looks like."""
+
 from absl import app
 
 from xelogen.lint import Linter, init_linter
@@ -5,6 +7,7 @@ from xelogen.program import Program
 
 
 def main(_):
+    """An example main."""
     init_linter()
 
     pgm = Program()
@@ -27,7 +30,7 @@ def main(_):
     write["write"] = pulse
     write["name"] = concat
     extra = addone["*"] + 1
-    write["value"] = extra
+    write["value"] = extra + 2
 
     with write["success"] as chain:
         chain += write
