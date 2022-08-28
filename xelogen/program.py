@@ -16,14 +16,11 @@ class OwnedNode(Node):
         super().__init__(nodespec)
         self.owner = owner
 
-    def try_add(self, output_name: str, other: Any) -> Node:
-        return self._try_add(other, self[output_name])
-
     @functools.singledispatchmethod
-    def _try_add(self, other: Any, output: NodeOutput) -> Node:
+    def try_add(self, other: Any, output: NodeOutput) -> "Node":
         raise NotImplementedError()
 
-    @_try_add.register
+    @try_add.register
     def _(self, other: int, output: NodeOutput) -> Node:
         if output.datatype == Datatype.INT:
             if other == 1:
@@ -39,7 +36,7 @@ class OwnedNode(Node):
         raise ValueError(f"Cannot add integer {other} "
                          f"to node {self.spec.name} output {output.name}.")
 
-    @_try_add.register
+    @try_add.register
     def _(self, other: Node, output: NodeOutput) -> Node:
         arg = cast(NodeOutput, other["*"])
         if arg.datatype != output.datatype:

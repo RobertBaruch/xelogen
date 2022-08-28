@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, MutableMapping
 from enum import IntEnum, auto, unique
+import functools
 from typing import Any, Optional, Union, cast
 
 
@@ -111,10 +112,10 @@ class NodeOutput(Port):
         return ImpulseChain(self.node, self.name)
 
     def __add__(self, other: Any) -> "Node":
-        return self.node.try_add(self.name, other)
+        return self.node.try_add(other, self.node[self.name])
 
     def __iadd__(self, other: Union["Node", Port]) -> "NodeInput":
-        return NotImplemented
+        raise SyntaxError("Augmented assignment cannot be applied to outputs.")
 
 
 class NodeInput(Port):
@@ -128,21 +129,20 @@ class NodeInput(Port):
         raise ValueError("with can only be used with impulse outputs.")
 
     def __iadd__(self, other: Union["Node", Port]) -> "NodeInput":
-        print(f"iadd a {type(other)}")
         if isinstance(other, NodeInput):
-            raise ValueError("Cannot add an input to an input")
+            raise ValueError("Cannot augment an input with another input.")
         if not self.node[self.name].datatype.is_list():
-            raise ValueError("Cannot add an output to a non-list input")
+            raise ValueError("Cannot augment a non-expandable input.")
         if isinstance(other, Node):
             output = other.first_output_of_type(self.datatype)
-            print(f"Got an output {repr(output)}")
-            self.node.add_input(self.name, output)
+            self.node.append_input(self.name, output)
             return self
-        self.node.add_input(self.name, cast(NodeOutput, other))
+        self.node.append_input(self.name, cast(NodeOutput, other))
         return self
 
     def __add__(self, other: Any) -> "Node":
-        return NotImplemented
+        raise SyntaxError(
+            "Addition cannot be applied to inputs (did you mean +=?).")
 
 
 class Node(ABC):
@@ -188,36 +188,26 @@ class Node(ABC):
             raise IndexError(
                 f"Input {input_name} is not in node {self.spec.name}.")
         if isinstance(output, NodeOutput):
-            self.add_input(input_name, output)
+            self.append_input(input_name, output)
         else:
             self[input_name] = cast(Node, output).first_output_of_type(
                 self[input_name].datatype)
 
-    def add_input(self, input_name: str, output: NodeOutput) -> None:
-        """Adds the given output to the given input of this node."""
-        if self[input_name].datatype.is_list():
-            if output.datatype != self[input_name].datatype.element_type:
-                raise ValueError(
-                    f"Connecting an output of type {output.datatype.name} "
-                    f"to the {input_name} input of node {self.spec.name} of type "
-                    f"{self[input_name].datatype.element_type.name} is not possible."
-                )
-            self.inputs[input_name].append(output)
-            return
-
-        if self[input_name].datatype != output.datatype:
+    def append_input(self, input_name: str, output: NodeOutput) -> None:
+        """Appends the given output to the given input of this node."""
+        if output.datatype != self[input_name].datatype.element_type:
             raise ValueError(
                 f"Connecting an output of type {output.datatype.name} "
                 f"to the {input_name} input of node {self.spec.name} of type "
-                f"{self[input_name].datatype.name} is not possible.")
+                f"{self[input_name].datatype.element_type.name} is not possible."
+            )
+        if self[input_name].datatype.is_list():
+            self.inputs[input_name].append(output)
+            return
         if len(self.inputs[input_name]) > 0:
             raise ValueError(f"Cannot add another {output.datatype.name} "
                              f"to input {input_name} of node {self.spec.name}.")
         self.inputs[input_name].append(output)
-
-    def get_only_output(self) -> NodeOutput:
-        """Gets the only output for this node, which is always named '*'."""
-        return cast(NodeOutput, self["*"])
 
     def first_input_impulse(self) -> str:
         """Gets the name of the first input impulse in this Node."""
@@ -275,10 +265,11 @@ class Node(ABC):
 
     def __add__(self, other: Any) -> "Node":
         """Handles Node + x."""
-        return self.try_add("*", other)
+        return self.try_add(other, cast(NodeOutput, self["*"]))
 
+    @functools.singledispatchmethod
     @abstractmethod
-    def try_add(self, output_name: str, other: Any) -> "Node":
+    def try_add(self, other: Any, output: NodeOutput) -> "Node":
         """Attempts to add the given other value to the given output.
 
         Returns the new node implementing the addition that has been added
@@ -312,7 +303,7 @@ class ImpulseChain:
         """+= extends the chain."""
         input_name = other.first_input_impulse()
         next_output = other.first_output_impulse()
-        other.add_input(input_name, self.impulse)
+        other.append_input(input_name, self.impulse)
         self.impulse = next_output
         self.chain.append(other)
         return self
