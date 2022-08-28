@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, MutableMapping
 from enum import IntEnum, auto, unique
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, cast
 
 
 @unique
@@ -29,15 +29,16 @@ class Datatype(IntEnum):
             Datatype.IMPULSE_LIST, Datatype.STRING_LIST, Datatype.INT_LIST
         ]
 
+    @property
     def element_type(self):
-        """Gets the element datatype for a list datatype."""
+        """Gets the element datatype for a list datatype, or the datatype."""
         if self == Datatype.STRING_LIST:
             return Datatype.STRING
         if self == Datatype.IMPULSE_LIST:
             return Datatype.IMPULSE
         if self == Datatype.INT_LIST:
             return Datatype.INT
-        raise ValueError(f"Type {self.name} is not a list.")
+        return self
 
 
 class NodeSpec:
@@ -58,8 +59,8 @@ class NodeSpec:
         self.content_type = content_type
 
 
-class NodeOutput:
-    """Representation of a node's output."""
+class Port(ABC):
+    """Representation of an input or output port on a node."""
     node: "Node"
     name: str
 
@@ -68,52 +69,76 @@ class NodeOutput:
         self.name = name
 
     @property
+    @abstractmethod
     def datatype(self) -> Datatype:
-        """Gets the datatype of the output."""
-        return self.node.output_type(self.name)
+        """Gets the datatype of the port."""
+
+    @abstractmethod
+    def __enter__(self) -> "ImpulseChain":
+        """Enters an ImpulseChain context.
+
+        Only makes sense for impulse outputs.
+        """
+
+    @abstractmethod
+    def __iadd__(self, other: Union["Node", "Port"]) -> "NodeInput":
+        """Handles (input) Port += Node/ (output) Port.
+
+        Only makes sense for NodeInput += Node / NodeOutput.
+        """
+
+    @abstractmethod
+    def __add__(self, other: Any) -> "Node":
+        """Handles Port + Any.
+
+        Only makes sense for NodeOutput + Any.
+        """
+
+    def __exit__(self, exc_type: ..., exc_value: ..., traceback: ...):
+        pass
+
+
+class NodeOutput(Port):
+    """Representation of a node's output."""
+
+    @property
+    def datatype(self) -> Datatype:
+        return self.node.spec.outputs[self.name]
 
     def __enter__(self) -> "ImpulseChain":
         if self.datatype != Datatype.IMPULSE:
             raise ValueError("with can only be used with impulse outputs.")
         return ImpulseChain(self.node, self.name)
 
-    def __exit__(self, exc_type: ..., exc_value: ..., traceback: ...):
-        pass
-
     def __add__(self, other: Any) -> "Node":
         return self.node.try_add(self.name, other)
 
+    def __iadd__(self, other: Union["Node", Port]) -> "NodeInput":
+        return NotImplemented
 
-class ListInput:
+
+class NodeInput(Port):
     """Representation of a node's list input."""
-    node: "Node"
-    name: str
-
-    def __init__(self, node: "Node", name: str):
-        self.node = node
-        self.name = name
 
     @property
     def datatype(self) -> Datatype:
-        """Gets the element datatype of the input."""
-        return self.node.input_type(self.name).element_type()
+        return self.node.spec.inputs[self.name]
 
     def __enter__(self) -> "ImpulseChain":
         raise ValueError("with can only be used with impulse outputs.")
 
-    def __exit__(self, exc_type: ..., exc_value: ..., traceback: ...):
-        pass
-
-    def __iadd__(self, other: Union["Node", NodeOutput]) -> "ListInput":
+    def __iadd__(self, other: Union["Node", Port]) -> "NodeInput":
         print(f"iadd a {type(other)}")
-        if not self.node.input_type(self.name).is_list():
-            raise ValueError("Cannot add an input to a non-list input")
+        if isinstance(other, NodeInput):
+            raise ValueError("Cannot add an input to an input")
+        if not self.node[self.name].datatype.is_list():
+            raise ValueError("Cannot add an output to a non-list input")
         if isinstance(other, Node):
             output = other.first_output_of_type(self.datatype)
             print(f"Got an output {repr(output)}")
             self.node.add_input(self.name, output)
             return self
-        self.node.add_input(self.name, other)
+        self.node.add_input(self.name, cast(NodeOutput, other))
         return self
 
     def __add__(self, other: Any) -> "Node":
@@ -134,20 +159,15 @@ class Node(ABC):
         for i in nodespec.inputs.keys():
             self.inputs[i] = []
 
-    def __getitem__(self,
-                    output_or_list_input: str) -> Union[ListInput, NodeOutput]:
-        """Gets the output or list input with the given name."""
-        if output_or_list_input in self.spec.outputs:
-            return self.get_output(output_or_list_input)
-        if output_or_list_input in self.spec.inputs and self.spec.inputs[
-                output_or_list_input].is_list():
-            return ListInput(self, output_or_list_input)
-        raise IndexError(
-            f"Output or list input {output_or_list_input} is not in node "
-            f"{self.spec.name}.")
+    def __getitem__(self, name: str) -> Port:
+        """Gets the port with the given name."""
+        if name in self.spec.outputs:
+            return NodeOutput(self, name)
+        if name in self.spec.inputs:
+            return NodeInput(self, name)
+        raise IndexError(f"Port {name} is not in node {self.spec.name}.")
 
-    def __setitem__(self, input_name: str, output: Union["Node", NodeOutput,
-                                                         ListInput]) -> None:
+    def __setitem__(self, input_name: str, output: Union["Node", Port]) -> None:
         """Sets the input with the given name to the given output.
 
         Connecting an output to the given input:
@@ -160,8 +180,8 @@ class Node(ABC):
         input's type:
             node1[input] = node2
         """
-        if isinstance(output, ListInput):
-            # We've already done the add in ListInput.__iadd__
+        if isinstance(output, NodeInput):
+            # We've already done the add in NodeInput.__iadd__
             return
 
         if input_name not in self.inputs:
@@ -170,46 +190,34 @@ class Node(ABC):
         if isinstance(output, NodeOutput):
             self.add_input(input_name, output)
         else:
-            self[input_name] = output.first_output_of_type(
-                self.input_type(input_name))
-
-    def input_type(self, input_name: str) -> Datatype:
-        """Gets the input datatype for the given input."""
-        return self.spec.inputs[input_name]
-
-    def output_type(self, output_name: str) -> Datatype:
-        """Gets the output datatype for the given output."""
-        return self.spec.outputs[output_name]
+            self[input_name] = cast(Node, output).first_output_of_type(
+                self[input_name].datatype)
 
     def add_input(self, input_name: str, output: NodeOutput) -> None:
         """Adds the given output to the given input of this node."""
-        if self.input_type(input_name).is_list():
-            if output.datatype != self.input_type(input_name).element_type():
+        if self[input_name].datatype.is_list():
+            if output.datatype != self[input_name].datatype.element_type:
                 raise ValueError(
                     f"Connecting an output of type {output.datatype.name} "
                     f"to the {input_name} input of node {self.spec.name} of type "
-                    f"{self.input_type(input_name).element_type().name} is not possible."
+                    f"{self[input_name].datatype.element_type.name} is not possible."
                 )
             self.inputs[input_name].append(output)
             return
 
-        if self.input_type(input_name) != output.datatype:
+        if self[input_name].datatype != output.datatype:
             raise ValueError(
                 f"Connecting an output of type {output.datatype.name} "
                 f"to the {input_name} input of node {self.spec.name} of type "
-                f"{self.input_type(input_name).name} is not possible.")
+                f"{self[input_name].datatype.name} is not possible.")
         if len(self.inputs[input_name]) > 0:
             raise ValueError(f"Cannot add another {output.datatype.name} "
                              f"to input {input_name} of node {self.spec.name}.")
         self.inputs[input_name].append(output)
 
-    def get_output(self, output: str) -> NodeOutput:
-        """Gets the given output for this node."""
-        return NodeOutput(self, output)
-
     def get_only_output(self) -> NodeOutput:
         """Gets the only output for this node, which is always named '*'."""
-        return self.get_output("*")
+        return cast(NodeOutput, self["*"])
 
     def first_input_impulse(self) -> str:
         """Gets the name of the first input impulse in this Node."""
@@ -226,7 +234,7 @@ class Node(ABC):
     def first_output_of_type(self, datatype: Datatype) -> NodeOutput:
         """Gets the first output of the given type."""
         if datatype.is_list():
-            datatype = datatype.element_type()
+            datatype = datatype.element_type
         first = next((name for (name, output_type) in self.spec.outputs.items()
                       if output_type == datatype), None)
         if not first:
@@ -294,7 +302,7 @@ class ImpulseChain:
 
     def __init__(self, node: Node, output: str):
         self.chain = []
-        impulse = node.get_output(output)
+        impulse = cast(NodeOutput, node[output])
         if impulse.datatype != Datatype.IMPULSE:
             raise ValueError(f"Output {output} of node {node.spec.name} "
                              "is not an impulse.")
