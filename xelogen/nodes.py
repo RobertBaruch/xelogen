@@ -22,12 +22,15 @@ class Datatype(IntEnum):
     INT_LIST = auto()
     STRING = auto()
     STRING_LIST = auto()
+    BOOL = auto()
+    BOOL_LIST = auto()
     SLOT = auto()
 
     def is_list(self) -> bool:
         """Determines whether this is a list datatype."""
         return self in [
-            Datatype.IMPULSE_LIST, Datatype.STRING_LIST, Datatype.INT_LIST
+            Datatype.IMPULSE_LIST, Datatype.STRING_LIST, Datatype.INT_LIST,
+            Datatype.BOOL_LIST
         ]
 
     @property
@@ -39,6 +42,8 @@ class Datatype(IntEnum):
             return Datatype.IMPULSE
         if self == Datatype.INT_LIST:
             return Datatype.INT
+        if self == Datatype.BOOL_LIST:
+            return Datatype.BOOL
         return self
 
 
@@ -70,6 +75,10 @@ class Port(ABC):
         self.name = name
 
     @property
+    def nodename(self) -> str:
+        return self.node.spec.name
+
+    @property
     @abstractmethod
     def datatype(self) -> Datatype:
         """Gets the datatype of the port."""
@@ -95,7 +104,7 @@ class Port(ABC):
         Only makes sense for NodeOutput + Any.
         """
 
-    def __exit__(self, exc_type: ..., exc_value: ..., traceback: ...):
+    def __exit__(self, exc_type: ..., exc_value: ..., traceback: ...) -> None:
         pass
 
 
@@ -109,7 +118,7 @@ class NodeOutput(Port):
     def __enter__(self) -> "ImpulseChain":
         if self.datatype != Datatype.IMPULSE:
             raise ValueError("with can only be used with impulse outputs.")
-        return ImpulseChain(self.node, self.name)
+        return ImpulseChain(self.node, self.name).__enter__()
 
     def __add__(self, other: Any) -> "Node":
         return self.node.try_add(other, self.node[self.name])
@@ -158,6 +167,10 @@ class Node(ABC):
         self._content = None
         for i in nodespec.inputs.keys():
             self.inputs[i] = []
+
+    @property
+    def name(self) -> str:
+        return self.spec.name
 
     def __getitem__(self, name: str) -> Port:
         """Gets the port with the given name."""
@@ -221,6 +234,12 @@ class Node(ABC):
         """Gets the first output impulse in this Node."""
         return self.first_output_of_type(Datatype.IMPULSE)
 
+    def has_output_impulse(self) -> bool:
+        """Determines whether the node has any impulse output."""
+        first = next((name for (name, output_type) in self.spec.outputs.items()
+                      if output_type == Datatype.IMPULSE), None)
+        return first is not None
+
     def first_output_of_type(self, datatype: Datatype) -> NodeOutput:
         """Gets the first output of the given type."""
         if datatype.is_list():
@@ -259,6 +278,14 @@ class Node(ABC):
                 )
             self._content = value
             return
+        if self.spec.content_type == Datatype.BOOL:
+            if not isinstance(value, bool):
+                raise ValueError(
+                    f"Node {self.spec.name} can only take content of type "
+                    f"{self.spec.content_type.name}, and {type(value)} is not compatible"
+                )
+            self._content = value
+            return
         raise ValueError(
             f"Don't know how to handle content type {self.spec.content_type.name} "
             f"in node {self.spec.name}")
@@ -288,10 +315,25 @@ class ImpulseChain:
     The first impulse in the chain is defined by the passed-in arguments
     to the constructor.
     """
-    impulse: NodeOutput
+    impulse: Optional[NodeOutput]
     chain: list[Node]
 
-    def __init__(self, node: Node, output: str):
+    # Within this context, the last context.
+    last_context: Optional["ImpulseChain"]
+
+    stack: list["ImpulseChain"]
+
+    @classmethod
+    def init_context(cls):
+        """Initializes the context stack."""
+        ImpulseChain.stack = [ImpulseChain(None, "")]
+
+    def __init__(self, node: Optional[Node], output: str):
+        if not node:
+            # Special case, the top-level context
+            self.last_context = None
+            return
+
         self.chain = []
         impulse = cast(NodeOutput, node[output])
         if impulse.datatype != Datatype.IMPULSE:
@@ -299,11 +341,25 @@ class ImpulseChain:
                              "is not an impulse.")
         self.impulse = impulse
 
+    def __enter__(self) -> "ImpulseChain":
+        ImpulseChain.stack.append(self)
+        return self
+
+    def __exit__(self, exc_type: ..., exc_value: ..., traceback: ...) -> None:
+        ImpulseChain.stack.pop()
+        ImpulseChain.stack[-1].last_context = self
+
     def __iadd__(self, other: Node) -> "ImpulseChain":
         """+= extends the chain."""
+        if self.impulse is None:
+            raise ValueError(
+                f"The chain has ended: last node was {self.chain[-1].name}")
         input_name = other.first_input_impulse()
-        next_output = other.first_output_impulse()
         other.append_input(input_name, self.impulse)
-        self.impulse = next_output
+        if other.has_output_impulse():
+            next_output = other.first_output_impulse()
+            self.impulse = next_output
+        else:
+            self.impulse = None
         self.chain.append(other)
         return self

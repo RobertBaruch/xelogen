@@ -40,6 +40,10 @@ class Database:
                          inputs={},
                          outputs={"*": Datatype.INT},
                          content_type=Datatype.INT),
+                NodeSpec("BoolInput",
+                         inputs={},
+                         outputs={"*": Datatype.BOOL},
+                         content_type=Datatype.BOOL),
                 NodeSpec("ImpulseDisplay",
                          inputs={"impulse": Datatype.IMPULSE_LIST},
                          outputs={}),
@@ -56,5 +60,14 @@ class Database:
                              "values": Datatype.INT_LIST,
                          },
                          outputs={"*": Datatype.INT}),
+                NodeSpec("If",
+                         inputs={
+                             "impulse": Datatype.IMPULSE_LIST,
+                             "condition": Datatype.BOOL,
+                         },
+                         outputs={
+                             "true": Datatype.IMPULSE,
+                             "false": Datatype.IMPULSE
+                         }),
         ):
             self.add_nodespec(spec)

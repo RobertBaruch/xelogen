@@ -5,7 +5,7 @@ import functools
 from typing import Any, Optional, cast
 
 from xelogen.database import Database
-from xelogen.nodes import Datatype, Node, NodeOutput, NodeSpec
+from xelogen.nodes import Datatype, ImpulseChain, Node, NodeOutput, NodeSpec, Port
 
 
 class OwnedNode(Node):
@@ -66,20 +66,21 @@ class OwnedNode(Node):
 
 class Program:
     """All the nodes inside a program slot."""
-    db: Database
+    database: Database
     nodes: MutableSequence[OwnedNode]
 
     # A unique RootNode per program.
     _root_node: Optional[OwnedNode]
 
     def __init__(self):
-        self.db = Database()
+        self.database = Database()
         self.nodes = []
         self._root_node = None
+        ImpulseChain.init_context()
 
     def make_node(self, name: str) -> OwnedNode:
         """Gets an instance of a node of the given name."""
-        return OwnedNode(self.db.nodespecs_by_name[name], self)
+        return OwnedNode(self.database.nodespecs_by_name[name], self)
 
     def add_node(self, name: str) -> OwnedNode:
         """Adds a new node of the given name to the program."""
@@ -96,5 +97,81 @@ class Program:
 
     def print(self):
         """Print the program, for debugging."""
-        for n in self.nodes:
-            n.print()
+        for node in self.nodes:
+            node.print()
+
+
+class If(ImpulseChain):
+    """Context for if statements.
+
+    When the `trigger_impulse` happens, the condition is evaluated, and
+    either the true chain (If) or the false chain (Else) will happen.
+
+    An If's Else-clause must appear on the same context level as its If-clause
+    and there must be no other intervening with-clause.
+
+    ```
+    with If(trigger_impulse, condition) as impulse_chain:
+        # Chain when condition is true
+        impulse_chain += ...
+        impulse_chain += ...
+
+    with Else() as chain2:
+        # Chain when condition is false
+        chain2 += ...
+    ```
+
+    Note that you are allowed to nest If and Else:
+
+    ```
+    with If(trigger, condition) as chain:  # If-1
+        chain += ...
+        with If(trigger2, condition2) as chain2:  # If-2
+            chain2 += ...
+        with Else() as chain2:  # Matches with If-2
+            ...
+    with Else() as chain:  # Matches with If-1
+        ...
+    ```
+
+    This also means that you could even put statements between an If and
+    an Else:
+
+    ```
+    with If(trigger, condition) as chain:
+        ...
+    statement
+    statement
+
+    with Else() as chain:
+        ...
+    ```
+    """
+    if_node: OwnedNode
+
+    def __init__(self, trigger: Port, condition: Port):
+        if not isinstance(trigger, NodeOutput):
+            raise ValueError("trigger must be an output.")
+        if not isinstance(condition, NodeOutput):
+            raise ValueError("condition must be an output.")
+        if trigger.datatype != Datatype.IMPULSE:
+            raise ValueError(f"Output {trigger.name} of {trigger.nodename} "
+                             "is not an impulse.")
+        if condition.datatype != Datatype.BOOL:
+            raise ValueError(f"Output {condition.name} of {condition.nodename} "
+                             "is not a bool.")
+        program = cast(OwnedNode, condition.node).owner
+        self.if_node = program.add_node("If")
+        self.if_node["impulse"] = trigger
+        self.if_node["condition"] = condition
+        super().__init__(self.if_node, "true")
+
+
+class Else(ImpulseChain):
+    """The Else part of an If."""
+
+    def __init__(self):
+        last_context = ImpulseChain.stack[-1].last_context
+        if not isinstance(last_context, If):
+            raise SyntaxError("Cannot have Else without If first.")
+        super().__init__(last_context.if_node, "false")
