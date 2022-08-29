@@ -334,12 +334,19 @@ class ImpulseChain:
             self.last_context = None
             return
 
-        self.chain = []
+        self.chain = [node]
         impulse = cast(NodeOutput, node[output])
         if impulse.datatype != Datatype.IMPULSE:
             raise ValueError(f"Output {output} of node {node.spec.name} "
                              "is not an impulse.")
         self.impulse = impulse
+
+    @property
+    def last(self) -> NodeOutput:
+        if self.impulse is None:
+            raise ValueError(
+                f"The chain has ended: last node was {self.chain[-1].name}")
+        return self.impulse
 
     def __enter__(self) -> "ImpulseChain":
         ImpulseChain.stack.append(self)
