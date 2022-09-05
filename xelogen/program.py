@@ -66,14 +66,13 @@ class OwnedNode(Node):
 
 class Program:
     """All the nodes inside a program slot."""
-    database: Database
+    database: Database = Database()
     nodes: MutableSequence[OwnedNode]
 
     # A unique RootNode per program.
     _root_node: Optional[OwnedNode]
 
     def __init__(self):
-        self.database = Database()
         self.nodes = []
         self._root_node = None
         ImpulseChain.init_context()

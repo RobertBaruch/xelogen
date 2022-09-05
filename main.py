@@ -19,6 +19,9 @@ def main(_):
     string = pgm.add_node("StringInput")
     addone = pgm.add_node("PlusOne<Int>")
 
+    # with Program():
+    #   on pulse: write("World/Meow", Slot.root.num_children() + 3)
+
     num_children["slot"] = root
     addone["value"] = num_children
 
